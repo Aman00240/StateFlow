@@ -17,6 +17,7 @@ from app.config import settings
 llm = ChatGroq(api_key=settings.groq_key, model=settings.model)
 llm_with_tools = llm.bind_tools(AVAILABLE_TOOLS)
 MAX_ITERATIONS = 3
+DB_URI = "postgresql://postgres:postgres@localhost:5432/stateflow"
 
 
 def create_node_function(name: str, prompt: str, route_keys: list[str] | None = None):
@@ -150,13 +151,32 @@ def create_routing_function(path_map: dict[str, str]):
     return routing_function
 
 
-async def run_dynamic_graph(
+async def get_workflow_status(
     thread_id: str,
-    initial_message: str | None,
     nodes_config: list,
     edges_config: list,
     conditional_edges_config: list,
 ):
+    builder = build_graph_blueprint(
+        nodes_config, edges_config, conditional_edges_config
+    )
+
+    async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+        app = builder.compile(checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": thread_id}}
+
+        state_snapshot = await app.aget_state(config)  # type: ignore
+
+        if not state_snapshot:
+            return None
+
+        return {
+            "next_node": state_snapshot.next,
+            "messages": state_snapshot.values.get("messages", []),
+        }
+
+
+def build_graph_blueprint(nodes_config, edges_config, conditional_edges_config):
     builder = StateGraph(State)
 
     routing_map = {}
@@ -172,7 +192,6 @@ async def run_dynamic_graph(
     for edge in edges_config:
         source = START if edge.source == "START" else edge.source
         target = END if edge.target == "END" else edge.target
-
         builder.add_edge(source, target)
 
     for c_edge in conditional_edges_config:
@@ -180,12 +199,24 @@ async def run_dynamic_graph(
             k: (END if v == "END" else v) for k, v in c_edge.path_map.items()
         }
         mapped_path["fallback"] = END
-
         builder.add_conditional_edges(
             c_edge.source, create_routing_function(c_edge.path_map), mapped_path
         )
 
-    DB_URI = "postgresql://postgres:postgres@localhost:5432/stateflow"
+    return builder
+
+
+async def run_dynamic_graph(
+    thread_id: str,
+    initial_message: str | None,
+    nodes_config: list,
+    edges_config: list,
+    conditional_edges_config: list,
+):
+
+    builder = build_graph_blueprint(
+        nodes_config, edges_config, conditional_edges_config
+    )
 
     async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
         await checkpointer.setup()

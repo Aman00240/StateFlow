@@ -118,3 +118,35 @@ async def get_status(thread_id: str):
         "next_node": state["next_node"],
         "messages": state["messages"],
     }
+
+
+@app.post("/resume/{thread_id}")
+async def resume_workflow(thread_id: str):
+    async with await psycopg.AsyncConnection.connect(DB_URI) as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT config_json FROM workflow_configs WHERE thread_id = %s",
+                (thread_id,),
+            )
+            row = await cur.fetchone()
+
+    if not row:
+        raise HTTPException(
+            status_code=404, detail=f"Configuration for '{thread_id}' not found."
+        )
+
+    config_dict = row[0]
+    if isinstance(config_dict, str):
+        config_dict = json.loads(config_dict)
+
+    req = WorkFlowRequest(**config_dict)
+
+    final_state = await run_dynamic_graph(
+        thread_id=req.thread_id,
+        initial_message=None,
+        nodes_config=req.nodes,
+        edges_config=req.edges,
+        conditional_edges_config=req.conditional_edges,
+    )
+
+    return {"status": "success", "thread_id": req.thread_id, "final_state": final_state}

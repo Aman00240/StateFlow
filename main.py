@@ -41,6 +41,10 @@ class ConditionalEdgeConfig(BaseModel):
     path_map: dict[str, str]
 
 
+class ContinueRequest(BaseModel):
+    inject_message: str | None = None
+
+
 class WorkFlowRequest(BaseModel):
     thread_id: str
     initial_message: str | None = None
@@ -124,7 +128,7 @@ async def get_status(thread_id: str):
 
 
 @app.post("/continue/{thread_id}")
-async def continue_workflow(thread_id: str):
+async def continue_workflow(thread_id: str, req_body: ContinueRequest | None = None):
     async with await psycopg.AsyncConnection.connect(DB_URI) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -144,6 +148,8 @@ async def continue_workflow(thread_id: str):
 
     req = WorkFlowRequest(**config_dict)
 
+    injection = req_body.inject_message if req_body else None
+
     final_state = await run_dynamic_graph(
         thread_id=req.thread_id,
         initial_message=None,
@@ -151,6 +157,7 @@ async def continue_workflow(thread_id: str):
         edges_config=req.edges,
         conditional_edges_config=req.conditional_edges,
         interrupt_before=req.interrupt_before,
+        inject_message=injection,
     )
 
     return {"status": "success", "thread_id": req.thread_id, "final_state": final_state}

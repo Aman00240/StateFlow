@@ -5,6 +5,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -21,7 +22,7 @@ DB_URI = "postgresql://postgres:postgres@localhost:5432/stateflow"
 
 
 def create_node_function(name: str, prompt: str, route_keys: list[str] | None = None):
-    async def dynamic_node(state: State):
+    async def dynamic_node(state: State, config: RunnableConfig):
         system_rules = f"""{prompt}
         SYSTEM EXECUTION RULES:
         1. You have access to tools. Use them ONLY if necessary to fulfill the user's request.
@@ -47,6 +48,16 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
                                 content="Route successful.", tool_call_id=tc["id"]
                             )
                         )
+
+        return_messages = []
+
+        injection = config.get("configurable", {}).get("inject_message")
+
+        if injection:
+            authoritative_text = f"SYSTEM OVERRIDE INSTRUCTION: {injection}. You MUST follow this instruction in your final response."
+            human_injection = HumanMessage(authoritative_text)
+            current_messages.append(human_injection)
+            return_messages.append(human_injection)
 
         node_tools = AVAILABLE_TOOLS.copy()
 
@@ -108,7 +119,9 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
 
         formatted_output = f"[{name}]: {response.content}"
 
-        return {"messages": [AIMessage(formatted_output)]}
+        return_messages.append(AIMessage(formatted_output))
+
+        return {"messages": return_messages}
 
     return dynamic_node
 
@@ -220,6 +233,7 @@ async def run_dynamic_graph(
     edges_config: list,
     conditional_edges_config: list,
     interrupt_before: list[str] = [],
+    inject_message: str | None = None,
 ):
 
     builder = build_graph_blueprint(
@@ -232,7 +246,10 @@ async def run_dynamic_graph(
         app = builder.compile(
             checkpointer=checkpointer, interrupt_before=interrupt_before
         )
-        config = {"configurable": {"thread_id": thread_id}}
+
+        config = {
+            "configurable": {"thread_id": thread_id, "inject_message": inject_message}
+        }
 
         if initial_message:
             input_state = {"messages": [initial_message]}

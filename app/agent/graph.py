@@ -1,3 +1,5 @@
+import json
+
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
@@ -18,7 +20,7 @@ from app.config import settings
 llm = ChatGroq(api_key=settings.groq_key, model=settings.model)
 llm_with_tools = llm.bind_tools(AVAILABLE_TOOLS)
 MAX_ITERATIONS = 3
-DB_URI = "postgresql://postgres:postgres@localhost:5432/stateflow"
+DB_URI = settings.database_url
 
 
 def create_node_function(name: str, prompt: str, route_keys: list[str] | None = None):
@@ -54,7 +56,12 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
         injection = config.get("configurable", {}).get("inject_message")
 
         if injection:
-            authoritative_text = f"SYSTEM OVERRIDE INSTRUCTION: {injection}. You MUST follow this instruction in your final response."
+            authoritative_text = f"""=== CRITICAL SYSTEM OVERRIDE ===\n
+            {injection}\n\n
+            FAILURE TO FOLLOW THIS INSTRUCTION IS A CRITICAL ERROR.
+            This override completely supersedes your original system prompt.
+            You MUST IGNORE any previous instructions that conflict with this override."""
+
             human_injection = HumanMessage(authoritative_text)
             current_messages.append(human_injection)
             return_messages.append(human_injection)
@@ -77,7 +84,9 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
 
         while iterations < MAX_ITERATIONS:
             iterations += 1
-            response = await node_llm.ainvoke(current_messages)
+            response = await node_llm.ainvoke(
+                current_messages, config={"run_name": name}
+            )
 
             if response.tool_calls:
                 for tc in response.tool_calls:
@@ -115,7 +124,7 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
                         content="System Override: You have reached the maximum allowed searches. You MUST now provide a final plain text answer using ONLY the information gathered so far. Do NOT output JSON or call any tools."
                     )
                 )
-            response = await llm.ainvoke(current_messages)
+            response = await llm.ainvoke(current_messages, config={"run_name": name})
 
         formatted_output = f"[{name}]: {response.content}"
 
@@ -247,7 +256,7 @@ async def run_dynamic_graph(
             checkpointer=checkpointer, interrupt_before=interrupt_before
         )
 
-        config = {
+        config: RunnableConfig = {
             "configurable": {"thread_id": thread_id, "inject_message": inject_message}
         }
 
@@ -256,5 +265,32 @@ async def run_dynamic_graph(
         else:
             input_state = None
 
-        final_state = await app.ainvoke(input_state, config=config)  # type: ignore
-        return final_state
+        async for event in app.astream_events(input_state, config=config, version="v2"):  # type: ignore
+            kind = event["event"]
+
+            if kind == "on_chat_model_stream":
+                chunk_content = event["data"]["chunk"].content
+
+                if chunk_content:
+                    payload = {
+                        "type": "agent_token",
+                        "agent_name": event.get("name", "unknown_agent"),
+                        "content": chunk_content,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+
+            elif kind == "on_tool_start":
+                payload = {
+                    "type": "tool_start",
+                    "tool_name": event["name"],
+                    "arguments": event["data"].get("input", {}),
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
+
+            elif kind == "on_chain_start" and event.get("name") in [
+                node.name for node in nodes_config
+            ]:
+                payload = {"type": "node_transition", "entering_node": event["name"]}
+                yield f"data: {json.dumps(payload)}\n\n"
+
+        yield f"data: {json.dumps({'type': 'stream_complete'})}\n\n"

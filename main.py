@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import psycopg
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.agent.graph import DB_URI, get_workflow_status, run_dynamic_graph
@@ -69,16 +70,17 @@ async def execute_workflow(req: WorkFlowRequest):
         )
         await conn.commit()
 
-    final_state = await run_dynamic_graph(
-        thread_id=req.thread_id,
-        initial_message=req.initial_message,
-        nodes_config=req.nodes,
-        edges_config=req.edges,
-        conditional_edges_config=req.conditional_edges,
-        interrupt_before=req.interrupt_before,
+    return StreamingResponse(
+        run_dynamic_graph(
+            thread_id=req.thread_id,
+            initial_message=req.initial_message,
+            nodes_config=req.nodes,
+            edges_config=req.edges,
+            conditional_edges_config=req.conditional_edges,
+            interrupt_before=req.interrupt_before,
+        ),
+        media_type="text/event-stream",
     )
-
-    return {"status": "success", "thread_id": req.thread_id, "final_state": final_state}
 
 
 @app.get("/status/{thread_id}")
@@ -150,14 +152,15 @@ async def continue_workflow(thread_id: str, req_body: ContinueRequest | None = N
 
     injection = req_body.inject_message if req_body else None
 
-    final_state = await run_dynamic_graph(
-        thread_id=req.thread_id,
-        initial_message=None,
-        nodes_config=req.nodes,
-        edges_config=req.edges,
-        conditional_edges_config=req.conditional_edges,
-        interrupt_before=req.interrupt_before,
-        inject_message=injection,
+    return StreamingResponse(
+        run_dynamic_graph(
+            thread_id=req.thread_id,
+            initial_message=None,
+            nodes_config=req.nodes,
+            edges_config=req.edges,
+            conditional_edges_config=req.conditional_edges,
+            interrupt_before=req.interrupt_before,
+            inject_message=injection,
+        ),
+        media_type="text/event-stream",
     )
-
-    return {"status": "success", "thread_id": req.thread_id, "final_state": final_state}

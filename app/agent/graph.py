@@ -156,13 +156,16 @@ async def get_workflow_status(
     nodes_config: list,
     edges_config: list,
     conditional_edges_config: list,
+    interrupt_before: list[str] = [],
 ):
     builder = build_graph_blueprint(
         nodes_config, edges_config, conditional_edges_config
     )
 
     async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
-        app = builder.compile(checkpointer=checkpointer)
+        app = builder.compile(
+            checkpointer=checkpointer, interrupt_before=interrupt_before
+        )
         config = {"configurable": {"thread_id": thread_id}}
 
         state_snapshot = await app.aget_state(config)  # type: ignore
@@ -176,7 +179,11 @@ async def get_workflow_status(
         }
 
 
-def build_graph_blueprint(nodes_config, edges_config, conditional_edges_config):
+def build_graph_blueprint(
+    nodes_config,
+    edges_config,
+    conditional_edges_config,
+):
     builder = StateGraph(State)
 
     routing_map = {}
@@ -212,6 +219,7 @@ async def run_dynamic_graph(
     nodes_config: list,
     edges_config: list,
     conditional_edges_config: list,
+    interrupt_before: list[str] = [],
 ):
 
     builder = build_graph_blueprint(
@@ -221,7 +229,9 @@ async def run_dynamic_graph(
     async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
         await checkpointer.setup()
 
-        app = builder.compile(checkpointer=checkpointer)
+        app = builder.compile(
+            checkpointer=checkpointer, interrupt_before=interrupt_before
+        )
         config = {"configurable": {"thread_id": thread_id}}
 
         if initial_message:

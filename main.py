@@ -47,6 +47,7 @@ class WorkFlowRequest(BaseModel):
     nodes: list[NodeConfig]
     edges: list[EdgeConfig]
     conditional_edges: list[ConditionalEdgeConfig] = Field(default_factory=list)
+    interrupt_before: list[str] = Field(default_factory=list)
 
 
 @app.post("/execute")
@@ -70,6 +71,7 @@ async def execute_workflow(req: WorkFlowRequest):
         nodes_config=req.nodes,
         edges_config=req.edges,
         conditional_edges_config=req.conditional_edges,
+        interrupt_before=req.interrupt_before,
     )
 
     return {"status": "success", "thread_id": req.thread_id, "final_state": final_state}
@@ -104,6 +106,7 @@ async def get_status(thread_id: str):
         nodes_config=req.nodes,
         edges_config=req.edges,
         conditional_edges_config=req.conditional_edges,
+        interrupt_before=req.interrupt_before,
     )
 
     if not state:
@@ -120,8 +123,8 @@ async def get_status(thread_id: str):
     }
 
 
-@app.post("/resume/{thread_id}")
-async def resume_workflow(thread_id: str):
+@app.post("/continue/{thread_id}")
+async def continue_workflow(thread_id: str):
     async with await psycopg.AsyncConnection.connect(DB_URI) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
@@ -147,6 +150,7 @@ async def resume_workflow(thread_id: str):
         nodes_config=req.nodes,
         edges_config=req.edges,
         conditional_edges_config=req.conditional_edges,
+        interrupt_before=req.interrupt_before,
     )
 
     return {"status": "success", "thread_id": req.thread_id, "final_state": final_state}

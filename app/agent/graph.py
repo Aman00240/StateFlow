@@ -14,7 +14,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.state import State
-from app.agent.tools.web_search import AVAILABLE_TOOLS
+from app.agent.tools import AVAILABLE_TOOLS
 from app.config import settings
 
 llm = ChatGroq(api_key=settings.groq_key, model=settings.model)
@@ -23,7 +23,12 @@ MAX_ITERATIONS = 3
 DB_URI = settings.database_url
 
 
-def create_node_function(name: str, prompt: str, route_keys: list[str] | None = None):
+def create_node_function(
+    name: str,
+    prompt: str,
+    route_keys: list[str] | None = None,
+    tool_names: list[str] = None,
+):
     async def dynamic_node(state: State, config: RunnableConfig):
         system_rules = f"""{prompt}
         SYSTEM EXECUTION RULES:
@@ -66,7 +71,8 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
             current_messages.append(human_injection)
             return_messages.append(human_injection)
 
-        node_tools = AVAILABLE_TOOLS.copy()
+        toolnames = tool_names or []
+        node_tools = [t for t in AVAILABLE_TOOLS if t.name in toolnames]
 
         if route_keys:
 
@@ -77,7 +83,10 @@ def create_node_function(name: str, prompt: str, route_keys: list[str] | None = 
 
             node_tools.append(route_workflow)
 
-        node_llm = llm.bind_tools(node_tools)
+        if node_tools:
+            node_llm = llm.bind_tools(node_tools)
+        else:
+            node_llm = llm
 
         iterations = 0
         response = None
@@ -215,7 +224,10 @@ def build_graph_blueprint(
     for node in nodes_config:
         route_keys = routing_map.get(node.name)
         builder.add_node(
-            node.name, create_node_function(node.name, node.prompt, route_keys)
+            node.name,
+            create_node_function(
+                node.name, node.prompt, route_keys, getattr(node, "tools", [])
+            ),
         )
 
     for edge in edges_config:

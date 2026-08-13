@@ -9,5 +9,3 @@ def web_search(query: str) -> str:
 
     return search.invoke(query)
 
-
-AVAILABLE_TOOLS = [web_search]

@@ -30,6 +30,7 @@ app = FastAPI(lifespan=lifespan)
 class NodeConfig(BaseModel):
     name: str
     prompt: str
+    tools: list[str] = []
 
 
 class EdgeConfig(BaseModel):

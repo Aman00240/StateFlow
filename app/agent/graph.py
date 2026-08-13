@@ -6,6 +6,7 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    trim_messages,
 )
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -28,7 +29,7 @@ def create_node_function(
     name: str,
     prompt: str,
     route_keys: list[str] | None = None,
-    tool_names: list[str] = None,
+    tool_names: list[str] | None = None,
 ):
     async def dynamic_node(state: State, config: RunnableConfig):
         system_rules = f"""{prompt}
@@ -45,10 +46,21 @@ def create_node_function(
         current_messages: list[BaseMessage] = []
         current_messages.append(SystemMessage(content=system_rules))
 
-        for msg in state.get("messages", []):
+        raw_history = state.get("messages", [])
+
+        trimmed_history = trim_messages(
+            raw_history,
+            max_tokens=10,
+            token_counter=len,
+            strategy="last",
+            start_on="human",
+            allow_partial=False,
+        )
+
+        for msg in trimmed_history:
             current_messages.append(msg)
 
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
+            if isinstance(msg, AIMessage) and msg.tool_calls:
                 for tc in msg.tool_calls:
                     if tc["name"] == "route_workflow":
                         current_messages.append(
@@ -242,7 +254,9 @@ def build_graph_blueprint(
         }
         mapped_path["fallback"] = END
         builder.add_conditional_edges(
-            c_edge.source, create_routing_function(c_edge.path_map), mapped_path
+            c_edge.source,
+            create_routing_function(c_edge.path_map),
+            mapped_path,  # type: ignore
         )
 
     return builder

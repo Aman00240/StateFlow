@@ -15,12 +15,13 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent.state import State
 from app.agent.tools import AVAILABLE_TOOLS
-from app.config import settings
+from app.core.config import settings
+from app.db.session import DB_URI
+from app.schemas.schemas import ConditionalEdgeConfig, EdgeConfig, NodeConfig
 
 llm = ChatGroq(api_key=settings.groq_key, model=settings.model)
 llm_with_tools = llm.bind_tools(AVAILABLE_TOOLS)
 MAX_ITERATIONS = 3
-DB_URI = settings.database_url
 
 
 def create_node_function(
@@ -184,9 +185,9 @@ def create_routing_function(path_map: dict[str, str]):
 
 async def get_workflow_status(
     thread_id: str,
-    nodes_config: list,
-    edges_config: list,
-    conditional_edges_config: list,
+    nodes_config: list[NodeConfig],
+    edges_config: list[EdgeConfig],
+    conditional_edges_config: list[ConditionalEdgeConfig],
     interrupt_before: list[str] = [],
 ):
     builder = build_graph_blueprint(
@@ -211,9 +212,9 @@ async def get_workflow_status(
 
 
 def build_graph_blueprint(
-    nodes_config,
-    edges_config,
-    conditional_edges_config,
+    nodes_config: list[NodeConfig],
+    edges_config: list[EdgeConfig],
+    conditional_edges_config: list[ConditionalEdgeConfig],
 ):
     builder = StateGraph(State)
 
@@ -250,9 +251,9 @@ def build_graph_blueprint(
 async def run_dynamic_graph(
     thread_id: str,
     initial_message: str | None,
-    nodes_config: list,
-    edges_config: list,
-    conditional_edges_config: list,
+    nodes_config: list[NodeConfig],
+    edges_config: list[EdgeConfig],
+    conditional_edges_config: list[ConditionalEdgeConfig],
     interrupt_before: list[str] = [],
     inject_message: str | None = None,
 ):
